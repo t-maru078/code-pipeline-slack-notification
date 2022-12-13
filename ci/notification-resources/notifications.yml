@@ -1,0 +1,30 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Pipeline notification resources"
+
+Parameters:
+  PipelineName:
+    Type: String
+  ChatbotArn:
+    Type: String
+
+Resources:
+
+  Notification:
+    Type: AWS::CodeStarNotifications::NotificationRule
+    Properties:
+      Name: pipeline-notification-rule
+      DetailType: FULL
+      Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${PipelineName}"
+      EventTypeIds:
+        - codepipeline-pipeline-pipeline-execution-failed
+        - codepipeline-pipeline-pipeline-execution-canceled
+        - codepipeline-pipeline-pipeline-execution-started
+        - codepipeline-pipeline-pipeline-execution-resumed
+        - codepipeline-pipeline-pipeline-execution-succeeded
+        - codepipeline-pipeline-pipeline-execution-superseded
+        - codepipeline-pipeline-manual-approval-failed
+        - codepipeline-pipeline-manual-approval-needed
+        - codepipeline-pipeline-manual-approval-succeeded
+      Targets:
+        - TargetType: AWSChatbotSlack
+          TargetAddress: !Ref ChatbotArn

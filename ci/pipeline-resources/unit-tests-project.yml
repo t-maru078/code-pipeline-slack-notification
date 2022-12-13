@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Unit tests CodeBuild resources"
+
+Parameters:
+  ArtifactsEncryptionKeyArn:
+    Type: String
+
+Mappings:
+  Constraints:
+    BuildResources:
+      CodeBuildImage: "aws/codebuild/standard:6.0"
+      ComputeType: BUILD_GENERAL1_SMALL
+      BuildSpec: "ci/code-build/unit-tests/buildspec.yml"
+
+Resources:
+
+  UnitTestsProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      ServiceRole: !Ref UnitTestsProjectRole
+      EncryptionKey: !Ref ArtifactsEncryptionKeyArn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: !FindInMap [ Constraints, BuildResources, ComputeType ]
+        Image: !FindInMap [ Constraints, BuildResources, CodeBuildImage ]
+        PrivilegedMode: true
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: !FindInMap [ Constraints, BuildResources, BuildSpec ]
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Ref UnitTestsProjectLogsGroup
+      Cache:
+        Type: LOCAL
+        Modes:
+          - LOCAL_DOCKER_LAYER_CACHE
+          - LOCAL_SOURCE_CACHE
+      TimeoutInMinutes: 10
+
+  UnitTestsProjectPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Path: "/"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - logs:*
+              - s3:Delete*
+              - s3:GetObject
+              - s3:ListAllMyBuckets
+              - s3:ListBucket
+              - s3:ListBuckets
+              - s3:ListObjects
+              - s3:Put*
+              - kms:*
+            Effect: Allow
+            Resource: "*"
+
+  UnitTestsProjectRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: "/"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref UnitTestsProjectPolicy
+
+  UnitTestsProjectLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 30
+
+Outputs:
+  ProjectArn:
+    Value: !GetAtt UnitTestsProject.Arn
+
+  ProjectName:
+    Value: !Ref UnitTestsProject
+
+  RoleName:
+    Value: !Ref UnitTestsProjectRole
+
+  RoleArn:
+    Value: !GetAtt UnitTestsProjectRole.Arn
+
+  RoleId:
+    Value: !GetAtt UnitTestsProjectRole.RoleId
+
+  PolicyName:
+    Value: !Ref UnitTestsProjectPolicy

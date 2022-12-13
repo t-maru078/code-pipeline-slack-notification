@@ -1,0 +1,59 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Artifact repository resources"
+
+Resources:
+  ArtifactRepository:
+    Type: AWS::S3::Bucket
+
+  ArtifactEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: !Ref AWS::StackName
+        Statement:
+          - Sid: "Allows admin of the key"
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action:
+              - kms:Create*
+              - kms:Describe*
+              - kms:Enable*
+              - kms:List*
+              - kms:Put*
+              - kms:Update*
+              - kms:Revoke*
+              - kms:Disable*
+              - kms:Get*
+              - kms:Delete*
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+            Resource: "*"
+
+  ArtifactEncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/github-webhook-pipeline-artifact-encryption-key"
+      TargetKeyId: !Ref ArtifactEncryptionKey
+
+Outputs:
+  ArtifactRepositoryArn:
+    Value: !GetAtt ArtifactRepository.Arn
+
+  ArtifactRepositoryName:
+    Value: !Ref ArtifactRepository
+
+  ArtifactEncryptionKeyArn:
+    Value: !GetAtt ArtifactEncryptionKey.Arn
+
+  ArtifactEncryptionKeyID:
+    Value: !Ref ArtifactEncryptionKey
+
+  ArtifactEncryptionKeyAliasName:
+    Value: !Ref ArtifactEncryptionKeyAlias

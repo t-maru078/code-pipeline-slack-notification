@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "The pipeline resources"
+
+Parameters:
+  SourceCodeRepositoryTmplPath:
+    Type: String
+  ArtifactRepositoryTmplPath:
+    Type: String
+  UnitTestsProjectTmplPath:
+    Type: String
+  PipelineTmplPath:
+    Type: String
+  ChatBotTmplPath:
+    Type: String
+  NotificationsTmplPath:
+    Type: String
+  GithubWebhookProjectTmplPath:
+    Type: String
+  SourceCodeRepositoryURL:
+    Type: String
+  SlackWorkspaceId:
+    Type: String
+  SlackChannelId:
+    Type: String
+
+Resources:
+  SourceCodeRepositoryStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref SourceCodeRepositoryTmplPath
+      TimeoutInMinutes: 5
+
+  ArtifactRepositoryStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref ArtifactRepositoryTmplPath
+      TimeoutInMinutes: 5
+
+  UnitTestsProjectStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref UnitTestsProjectTmplPath
+      TimeoutInMinutes: 5
+      Parameters:
+        ArtifactsEncryptionKeyArn: !GetAtt ArtifactRepositoryStack.Outputs.ArtifactEncryptionKeyArn
+
+  PipelineStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref PipelineTmplPath
+      TimeoutInMinutes: 5
+      Parameters:
+        SourceCodeRepositoryName: !GetAtt SourceCodeRepositoryStack.Outputs.Name
+        UnitTestsProjectName: !GetAtt UnitTestsProjectStack.Outputs.ProjectName
+        ArtifactRepositoryName: !GetAtt ArtifactRepositoryStack.Outputs.ArtifactRepositoryName
+        ArtifactsEncryptionKeyArn: !GetAtt ArtifactRepositoryStack.Outputs.ArtifactEncryptionKeyArn
+
+  GithubWebhookProjectStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref GithubWebhookProjectTmplPath
+      TimeoutInMinutes: 5
+      Parameters:
+        SourceCodeRepositoryName: !GetAtt SourceCodeRepositoryStack.Outputs.Name
+        SourceCodeRepositoryArn: !GetAtt SourceCodeRepositoryStack.Outputs.Arn
+        SourceCodeRepositoryURL: !Ref SourceCodeRepositoryURL
+        PipelineName: !GetAtt PipelineStack.Outputs.PipelineName
+
+  ChatBotStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref ChatBotTmplPath
+      TimeoutInMinutes: 5
+      Parameters:
+        SlackWorkspaceId: !Ref SlackWorkspaceId
+        SlackChannelId: !Ref SlackChannelId
+
+  NotificationStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref NotificationsTmplPath
+      TimeoutInMinutes: 5
+      Parameters:
+        PipelineName: !GetAtt PipelineStack.Outputs.PipelineName
+        ChatbotArn: !GetAtt ChatBotStack.Outputs.ChatbotArn
+
+Outputs:
+  SourceCodeRepositoryName:
+    Value: !GetAtt SourceCodeRepositoryStack.Outputs.Name
+    Export:
+      Name: !Sub "${AWS::StackName}-SourceCodeRepositoryName"
+
+  SourceCodeRepositoryArn:
+    Value: !GetAtt SourceCodeRepositoryStack.Outputs.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-SourceCodeRepositoryArn"
+
+  SourceCodeRepositoryNameManagementConsoleURL:
+    Value: !Sub "https://s3.console.aws.amazon.com/s3/buckets/${SourceCodeRepositoryStack.Outputs.Name}"
+
+  ArtifactRepositoryName:
+    Value: !GetAtt ArtifactRepositoryStack.Outputs.ArtifactRepositoryName
+    Export:
+      Name: !Sub "${AWS::StackName}-ArtifactRepositoryName"
+
+  ArtifactRepositoryArn:
+    Value: !GetAtt ArtifactRepositoryStack.Outputs.ArtifactRepositoryArn
+    Export:
+      Name: !Sub "${AWS::StackName}-ArtifactRepositoryArn"
+
+  ArtifactRepositoryNameManagementConsoleURL:
+    Value: !Sub "https://s3.console.aws.amazon.com/s3/buckets/${ArtifactRepositoryStack.Outputs.ArtifactRepositoryName}"
+
+  ArtifactsEncryptionKeyID:
+    Value: !GetAtt ArtifactRepositoryStack.Outputs.ArtifactEncryptionKeyID
+    Export:
+      Name: !Sub "${AWS::StackName}-ArtifactRepository-EncryptionKeyID"
+
+  ArtifactsEncryptionKeyArn:
+    Value: !GetAtt ArtifactRepositoryStack.Outputs.ArtifactEncryptionKeyArn
+    Export:
+      Name: !Sub "${AWS::StackName}-ArtifactRepository-EncryptionKeyArn"
+
+  ArtifactsEncryptionKeyAliasName:
+    Value: !GetAtt ArtifactRepositoryStack.Outputs.ArtifactEncryptionKeyAliasName
+    Export:
+      Name: !Sub "${AWS::StackName}-ArtifactRepository-EncryptionKeyAliasName"
+
+  ArtifactsEncryptionKeyManagementConsoleURL:
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/kms/home?region=${AWS::Region}#/kms/keys/${ArtifactRepositoryStack.Outputs.ArtifactEncryptionKeyID}"
+
+  UnitTestsProjectName:
+    Value: !GetAtt UnitTestsProjectStack.Outputs.ProjectName
+    Export:
+      Name: !Sub "${AWS::StackName}-UnitTestsProjectName"
+
+  UnitTestsProjectManagementConsoleURL:
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codebuild/${AWS::AccountId}/projects/${UnitTestsProjectStack.Outputs.ProjectName}"
+
+  PipelineName:
+    Value: !GetAtt PipelineStack.Outputs.PipelineName
+    Export:
+      Name: !Sub "${AWS::StackName}-PipelineName"
+
+  PipelineManagementConsoleURL:
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${PipelineStack.Outputs.PipelineName}/view"

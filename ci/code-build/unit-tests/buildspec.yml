@@ -1,0 +1,34 @@
+version: 0.2
+env:
+  shell: bash
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 16
+    commands:
+      - echo Install started on `date`
+    finally:
+      - echo Install finished on `date`
+      - |
+        echo "\n*************** OS Environment ***************"
+        echo " NodeJS Version: $(node --version)"
+        echo " Yarn Version: $(yarn --version)"
+        echo "\n*************** Build info ***************"
+        echo "$(cat ./build-info.json)"
+  pre_build:
+    commands:
+      - echo Pre Build started on `date`
+      - export TZ="Asia/Tokyo"
+    finally:
+      - echo Pre Build finished on `date`
+  build:
+    commands:
+      - echo Build started on `date`
+    finally:
+      - echo Build finished on `date`
+  post_build:
+    commands:
+      - echo Post Build started on `date`
+    finally:
+      - echo Post Build finished on `date`

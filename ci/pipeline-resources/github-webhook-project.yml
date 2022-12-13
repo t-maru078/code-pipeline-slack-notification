@@ -1,0 +1,413 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "GitHub webhook resources"
+
+Parameters:
+  SourceCodeRepositoryName:
+    Type: String
+  SourceCodeRepositoryArn:
+    Type: String
+  SourceCodeRepositoryURL:
+    Type: String
+  PipelineName:
+    Type: String
+
+Mappings:
+  Constraints:
+    BuildResources:
+      CodeBuildImage: "aws/codebuild/standard:5.0"
+      ComputeType: BUILD_GENERAL1_SMALL
+      BuildSpec: "ci/code-build/github-webhook/buildspec.yml"
+
+Resources:
+
+  GithubWebhookProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      ServiceRole: !Ref GithubWebhookProjectRole
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: !FindInMap [ Constraints, BuildResources, ComputeType ]
+        Image: !FindInMap [ Constraints, BuildResources, CodeBuildImage ]
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: SOURCE_CODE_REPOSITORY_NAME
+            Value: !Ref SourceCodeRepositoryName
+          - Name: PIPELINE_STATUS_TABLE_NAME
+            Value: !Ref PipelineStatusTable
+      Source:
+        Type: GITHUB
+        Auth:
+          Type: OAUTH
+        Location: !Ref SourceCodeRepositoryURL
+        BuildSpec: !FindInMap [ Constraints, BuildResources, BuildSpec ]
+        GitCloneDepth: 1
+        ReportBuildStatus: true
+      BadgeEnabled: False
+      Cache:
+        Type: LOCAL
+        Modes:
+          - LOCAL_DOCKER_LAYER_CACHE
+          - LOCAL_SOURCE_CACHE
+      Triggers:
+        FilterGroups:
+        - - Type: EVENT
+            Pattern: "PUSH, PULL_REQUEST_CREATED, PULL_REQUEST_UPDATED, PULL_REQUEST_REOPENED"
+            ExcludeMatchedPattern: false
+          - Type: HEAD_REF
+            Pattern: "^refs/heads/main$"
+            ExcludeMatchedPattern: true
+          - Type: HEAD_REF
+            Pattern: "^refs/heads/develop$"
+            ExcludeMatchedPattern: true
+          - Type: HEAD_REF
+            Pattern: "^refs/tags/.*"
+            ExcludeMatchedPattern: true
+        Webhook: true
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Ref GithubWebhookProjectLogsGroup
+      TimeoutInMinutes: 30
+
+  GithubWebhookProjectPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Path: "/"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - logs:*
+              - dynamodb:PutItem
+              - dynamodb:GetItem
+              - s3:GetObject
+              - s3:ListObjects
+              - s3:Put*
+            Effect: Allow
+            Resource: "*"
+
+  GithubWebhookProjectRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: "/"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref GithubWebhookProjectPolicy
+
+  GithubWebhookProjectLogsGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      RetentionInDays: 30
+
+  PipelineStatusTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: BuildId
+          AttributeType: S
+        - AttributeName: ExecutionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: BuildId
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      GlobalSecondaryIndexes:
+        - IndexName: PipelineStatusIndex
+          KeySchema:
+            - AttributeName: ExecutionId
+              KeyType: HASH
+          Projection:
+            NonKeyAttributes:
+              - BuildId
+              - BranchName
+              - Status
+              - TimeToLive
+            ProjectionType: INCLUDE
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
+      TimeToLiveSpecification:
+        AttributeName: TimeToLive
+        Enabled: true
+
+  CloudTrailS3bucket:
+    Type: AWS::S3::Bucket
+
+  CloudTrailS3Policy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudTrailS3bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudTrailS3bucket.Arn
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${CloudTrailS3bucket.Arn}/*AWSLogs/${AWS::AccountId}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+
+  S3ObjectLevelCloudTrail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn:
+      - CloudTrailS3Policy
+    Properties:
+      IsLogging: true
+      IsMultiRegionTrail: true
+      IncludeGlobalServiceEvents: true
+      S3BucketName: !Ref CloudTrailS3bucket
+      EventSelectors:
+        - DataResources:
+            - Type: AWS::S3::Object
+              Values:
+                - !Sub "${SourceCodeRepositoryArn}/"
+          IncludeManagementEvents: true
+          ReadWriteType: All
+
+  TriggeredEventHandlingRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventSource:
+            - s3.amazonaws.com
+          eventName:
+            - PutObject
+          requestParameters:
+            bucketName:
+              - !Ref SourceCodeRepositoryName
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt TriggeredEventHandlingFunction.Arn
+          Id: Lambda
+
+  FinishEventHandlingRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.codepipeline
+        detail-type:
+          - "CodePipeline Pipeline Execution State Change"
+        detail:
+          state:
+            - SUCCEEDED
+            - FAILED
+            - CANCELED
+            - SUPERSEDED
+          pipeline:
+            - !Ref PipelineName
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt FinishEventHandlingFunction.Arn
+          Id: Lambda
+
+  LambdaPermissionForTriggeredEventHandlingFunction:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TriggeredEventHandlingFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TriggeredEventHandlingRule.Arn
+
+  LambdaPermissionForFinishEventHandlingFunction:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FinishEventHandlingFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt FinishEventHandlingRule.Arn
+
+  LambdaFunctionPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Path: "/"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - dynamodb:GetItem
+            Effect: Allow
+            Resource: "arn:aws:dynamodb:*:*:table/*"
+          - Action:
+              - codepipeline:StartPipelineExecution
+            Effect: Allow
+            Resource: "*"
+          - Action:
+              - s3:GetObject
+              - s3:ListObjects
+              - s3:Put*
+            Effect: Allow
+            Resource: "*"
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "github-webhook-start-lambda-function-Role"
+      Path: "/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - !Ref LambdaFunctionPolicy
+
+  TriggeredEventHandlingFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - LambdaRole
+    Properties:
+      Handler: index.handler
+      Runtime: python3.9
+      MemorySize: 128
+      Environment:
+        Variables:
+          PIPELINE_STATUS_TABLE_NAME: !Ref PipelineStatusTable
+          PIPELINE_NAME: !Ref PipelineName
+      Timeout: 5
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+          import os
+          import zipfile
+          from boto3.dynamodb.conditions import Key
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['PIPELINE_STATUS_TABLE_NAME'])
+          s3 = boto3.resource('s3')
+          pipeline = boto3.client('codepipeline')
+          def handler(event, context):
+            logger.info(str(event))
+            logger.info(str(event['detail']['requestParameters']['bucketName']))
+            bucket = s3.Bucket(str(event['detail']['requestParameters']['bucketName']))
+            bucket.download_file(str(event['detail']['requestParameters']['key']), '/tmp/' + str(event['detail']['requestParameters']['key']))
+            with zipfile.ZipFile('/tmp/' + str(event['detail']['requestParameters']['key'])) as existing_zip:
+              existing_zip.extract('build-info.json', '/tmp')
+            json_open = open('/tmp/build-info.json', 'r')
+            json_load = json.load(json_open)
+            build_id = json_load['BuildInfo']['CodebuildBuildID']
+            logger.info(build_id)
+            pipelinename = os.environ['PIPELINE_NAME']
+            response = pipeline.start_pipeline_execution(
+              name=pipelinename
+            )
+            logger.info(str(response['pipelineExecutionId']))
+            updated = table.update_item(
+              Key={
+                  'BuildId': build_id
+              },
+              UpdateExpression="set #E = :e, #S = :s",
+              ExpressionAttributeNames= {
+                '#E': 'ExecutionId',
+                '#S': 'Status'
+              },
+              ExpressionAttributeValues={
+                  ':e': str(response['pipelineExecutionId']),
+                  ':s': 'Started'
+              },
+              ReturnValues="UPDATED_NEW"
+            )
+            logger.info(str(updated))
+
+  TriggeredEventHandlingFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn:
+      - TriggeredEventHandlingFunction
+    Properties:
+      RetentionInDays: 30
+      LogGroupName: !Sub "/aws/lambda/${TriggeredEventHandlingFunction}"
+
+  FinishEventHandlingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Runtime: python3.9
+      MemorySize: 128
+      Environment:
+        Variables:
+          PIPELINE_STATUS_TABLE_NAME: !Ref PipelineStatusTable
+      Timeout: 5
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+          import os
+          from boto3.dynamodb.conditions import Key
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['PIPELINE_STATUS_TABLE_NAME'])
+          def handler(event, context):
+            logger.info(str(event))
+            response = table.query(
+              IndexName="PipelineStatusIndex",
+              KeyConditionExpression=Key('ExecutionId').eq(event["detail"]["execution-id"])
+            )
+            for item in response['Items']:
+              logger.info(str(item))
+              updated = table.update_item(
+                Key={
+                    'BuildId': item["BuildId"]
+                },
+                UpdateExpression="set #S = :s",
+                ExpressionAttributeNames= {
+                  '#S': 'Status'
+                },
+                ExpressionAttributeValues={
+                    ':s': event["detail"]["state"]
+                },
+                ReturnValues="UPDATED_NEW"
+              )
+              logger.info(str(updated))
+
+  FinishEventHandlingFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn:
+      - FinishEventHandlingFunction
+    Properties:
+      RetentionInDays: 30
+      LogGroupName: !Sub "/aws/lambda/${FinishEventHandlingFunction}"
+
+Outputs:
+  GithubWebhookProjectName:
+    Value: !Ref GithubWebhookProject
+  PipelineStatusTableName:
+    Value: !Ref PipelineStatusTable
+  PipelineStatusTableArn:
+    Value: !GetAtt PipelineStatusTable.Arn

@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "AWS Chatbot Resources of notification which send information of toolchain"
+
+Parameters:
+  SlackChannelId:
+    Type: String
+  SlackWorkspaceId:
+    Type: String
+
+Resources:
+
+  Chatbot:
+    Type: AWS::Chatbot::SlackChannelConfiguration
+    Properties:
+      ConfigurationName: !Sub "pipeline-notification-${SlackChannelId}"
+      IamRoleArn: !GetAtt ChatbotRole.Arn
+      LoggingLevel: ERROR
+      SlackChannelId: !Ref SlackChannelId
+      SlackWorkspaceId: !Ref SlackWorkspaceId
+
+  ChatbotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: "/"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - chatbot.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref ChatbotPolicy
+
+  ChatbotPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Path: "/"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - cloudwatch:Describe*
+              - cloudwatch:Get*
+              - cloudwatch:List*
+            Effect: Allow
+            Resource: "*"
+
+  ChatbotLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn:
+      - Chatbot
+    Properties:
+      RetentionInDays: 30
+      LogGroupName: !Sub "/aws/chatbot/pipeline-notification-${SlackWorkspaceId}-${SlackChannelId}"
+
+Outputs:
+  ChatbotArn:
+    Value: !Ref Chatbot

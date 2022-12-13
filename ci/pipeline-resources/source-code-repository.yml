@@ -1,0 +1,16 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Source code repository resources"
+
+Resources:
+  SourceCodeRepository:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
+Outputs:
+  Arn:
+    Value: !GetAtt SourceCodeRepository.Arn
+
+  Name:
+    Value: !Ref SourceCodeRepository

@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Pipeline resources"
+
+Parameters:
+  SourceCodeRepositoryName:
+    Type: String
+  ArtifactRepositoryName:
+    Type: String
+  ArtifactsEncryptionKeyArn:
+    Type: String
+  UnitTestsProjectName:
+    Type: String
+
+Resources:
+  TestPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: !Ref ArtifactRepositoryName
+        Type: S3
+        EncryptionKey:
+          Type: KMS
+          Id: !Ref ArtifactsEncryptionKeyArn
+      RoleArn: !GetAtt PipelineRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: "1"
+                Provider: S3
+              Configuration:
+                S3Bucket: !Ref SourceCodeRepositoryName
+                S3ObjectKey: !Sub "latest.zip"
+                PollForSourceChanges: false
+              Name: Source
+              OutputArtifacts:
+                - Name: Source
+              RunOrder: 1
+        - Name: UnitTests
+          Actions:
+            - Name: UnitTests
+              InputArtifacts:
+                - Name: Source
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: "1"
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref UnitTestsProjectName
+              OutputArtifacts:
+                - Name: Application
+                - Name: AWSResources
+              RunOrder: 1
+        - Name: ManualApproval
+          Actions:
+            - Name: Approve
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Version: 1
+                Provider: Manual
+              RunOrder: 1
+
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service: cloudformation.amazonaws.com
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: "/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+Outputs:
+  PipelineName:
+    Value: !Ref TestPipeline
+
+  PipelineVersion:
+    Value: !GetAtt TestPipeline.Version
+
+  PipelineRoleName:
+    Value: !Ref PipelineRole
+
+  PipelineRoleArn:
+    Value: !GetAtt PipelineRole.Arn
+
+  PipelineRoleId:
+    Value: !GetAtt PipelineRole.RoleId

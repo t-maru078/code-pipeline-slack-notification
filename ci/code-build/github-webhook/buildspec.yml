@@ -1,0 +1,81 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 14
+    commands:
+      - echo Install started on `date`
+    finally:
+      - echo Install finished on `date`
+  pre_build:
+    commands:
+      - echo Pre Build started on `date`
+    finally:
+      - echo Pre Build finished on `date`
+  build:
+    commands:
+      - echo Build started on `date`
+      - BRANCH_NAME=$(git describe --contains --all HEAD)
+      - COMMIT_HASH=$(git rev-parse HEAD)
+      - COMMIT_MESSAGE=$(git log -1 --pretty='%s')
+      - |
+        echo "\n\n**********************************************\n Trigger Information \n**********************************************\n"
+        echo "ACCOUNT ID: ${CODEBUILD_WEBHOOK_ACTOR_ACCOUNT_ID}"
+        echo "BASE REF: ${CODEBUILD_WEBHOOK_BASE_REF}"
+        echo "WEBHOOK_EVENT: ${CODEBUILD_WEBHOOK_EVENT}"
+        echo "PREV_COMMIT: ${CODEBUILD_WEBHOOK_PREV_COMMIT}"
+        echo "COMMIT_HASH: ${COMMIT_HASH}"
+        echo "COMMIT_MESSAGE: ${COMMIT_MESSAGE}"
+        echo "HEAD_REF: ${CODEBUILD_WEBHOOK_HEAD_REF}"
+        echo "TRIGGER: ${CODEBUILD_WEBHOOK_TRIGGER}"
+        echo "\n\n**********************************************\n Configuration Information \n**********************************************\n"
+        echo "Bucket Name for dev pipeline: ${SOURCE_CODE_REPOSITORY_NAME}"
+        echo "Table Name for manageing pipeline status: ${PIPELINE_STATUS_TABLE_NAME}"
+      - |
+        cat << EOS | jq . > build-info.json
+        {
+          "TriggerInfo": {
+            "AccountID": "${CODEBUILD_WEBHOOK_ACTOR_ACCOUNT_ID}",
+            "BaseRef": "${CODEBUILD_WEBHOOK_BASE_REF}",
+            "WebhookEvent": "${CODEBUILD_WEBHOOK_EVENT}",
+            "PrevCommit": "${CODEBUILD_WEBHOOK_PREV_COMMIT}",
+            "CommitHash": "${COMMIT_HASH}",
+            "CommitMessage": "${COMMIT_MESSAGE}",
+            "HeadRef": "${CODEBUILD_WEBHOOK_HEAD_REF}",
+            "Trigger": "${CODEBUILD_WEBHOOK_TRIGGER}"
+          },
+          "BuildInfo": {
+            "CodebuildBuildARN": "${CODEBUILD_BUILD_ARN}",
+            "CodebuildBuildID": "${CODEBUILD_BUILD_ID}",
+            "CodebuildBuildNumber": "${CODEBUILD_BUILD_NUMBER}"
+          }
+        }
+        EOS
+      - zip -r latest.zip . -x .git/\*
+      - |
+        TIMESTAMP=$(date '+%Y-%m-%dT%H:%M:%S%z')
+        EXP=$(date -d '+1 days' +%s)
+        aws dynamodb put-item --table-name ${PIPELINE_STATUS_TABLE_NAME} --item "{ \"BuildId\": { \"S\": \"${CODEBUILD_BUILD_ID}\" }, \"BranchName\": { \"S\": \"${BRANCH_NAME}\" },\"Status\": { \"S\": \"TRIGGERED\" }, \"CreatedTS\": { \"S\": \"${TIMESTAMP}\" }, \"TimeToLive\": { \"N\": \"${EXP}\"} }"
+        aws s3 cp ./latest.zip s3://${SOURCE_CODE_REPOSITORY_NAME}
+        COUNT=0
+        while [ ${COUNT} -lt 120 ]
+        do
+          STATUS=$(aws dynamodb get-item --table-name ${PIPELINE_STATUS_TABLE_NAME} --key "{\"BuildId\": {\"S\": \"${CODEBUILD_BUILD_ID}\"}}" | jq -r '.Item.Status.S')
+          if [ ${STATUS} = "SUCCEEDED" ] || [ ${STATUS} = "SUPERSEDED" ]
+          then
+            exit 0
+          elif [ ${STATUS} = "FAILED" ] || [ ${STATUS} = "CANCELED" ]
+          then
+            exit 1
+          fi
+          sleep 20
+          COUNT=$(( COUNT + 1 ))
+        done
+    finally:
+      - echo Build finished on `date`
+  post_build:
+    commands:
+      - echo Post Build started on `date`
+    finally:
+      - echo Post Build finished on `date`
