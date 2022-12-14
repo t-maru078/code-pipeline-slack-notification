@@ -36,7 +36,7 @@ https://docs.aws.amazon.com/dtconsole/latest/userguide/concepts.html#concepts-ap
 1. AWS Chatbot コンソールを開き、Slack workspace との接続を行う
 
     1. `Configure a chat client` のセクションで Chat client から　Slack を選択し、`Configure client` を押す
-    1. 、Slack の設定画面が開き AWS からのアクセスを許可するかどうかを尋ねられるので、内容を確認し問題なければ Allow をクリックする
+    1. Slack の設定画面が開き AWS からのアクセスを許可するかどうかを尋ねられるので、内容を確認し問題なければ Allow をクリックする
 
 1. `scripts/env.template` をコピーして `scripts/.env` ファイルを作成し、必要なパラメータを記載する
 
