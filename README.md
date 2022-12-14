@@ -59,3 +59,5 @@ bash scripts/deploy-pipeline.sh
 - このサンプルは GitHub Apps などを設定する必要がなく上記のコマンドを使って AWS リソースをデプロイするだけで使用可能になりますが、GitHub の Webhook により起動される CodeBuild の Container は Pipeline 処理が完了か timeout するまで起動し続けますので、ビルドやテストなどに時間がかかるアプリケーションの場合 CodeBuild の料金がかさむ可能性がありますのでご注意ください。
 
 - CloudFormation stack の削除時に不要な S3 リソースが残らないように DeletionPolicy は設定しておりません。Pipeline 実行後は S3 内部にファイルが作成されておりますので stack の削除時に DELETE_FAILED 状態になりますが S3 内部のファイルを削除 (Object のすべての version を削除) してから再度 stack の削除を実行すると正常に削除されます。
+
+xxx
