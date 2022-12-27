@@ -6,7 +6,7 @@ eval "$(cat ${SCRIPT_DIR}/.env <(echo) <(declare -x))"
 : ==================================================
 :  Constants
 : ==================================================
-PROJECT_NAME="github-webhook-pipeline"
+PROJECT_NAME="code-pipeline-slack-notification"
 S3_BUCKET_NAME=${TEMPLATE_STORE_S3_BUCKET_NAME:-$$-cfn-templates-store}
 S3_PATH="s3://${TEMPLATE_STORE_S3_BUCKET_NAME}/${PROJECT_NAME}"
 EXPIRE_DURATION=300
@@ -68,7 +68,7 @@ function validate() {
 function generateSignedUrl() {
   for TMPL in $(cat)
   do
-    echo $(aws ${AWS_CLI_OPTIONS} s3 presign ${S3_PATH}/${PROJECT_NAME}/${TMPL} --expires-in $EXPIRE_DURATION)
+    echo $(aws ${AWS_CLI_OPTIONS} s3 presign ${S3_PATH}/${TMPL} --expires-in $EXPIRE_DURATION)
   done
 }
 
@@ -114,7 +114,7 @@ echo ${PIPELINE_TMPL_LIST} | validate
 [ $? -ne 0 ] && exit 1
 
 echo -e "\n    [3] upload to S3 bucket \n"
-aws ${AWS_CLI_OPTIONS} s3 sync ./ci ${S3_PATH}/${PROJECT_NAME} --exclude "codebuild/**/*"
+aws ${AWS_CLI_OPTIONS} s3 sync ./ci ${S3_PATH} --exclude "codebuild/**/*"
 
 echo -e "\n    [4] generate signed urls \n"
 PIPELINE_URLS=($(echo ${PIPELINE_TMPL_LIST} | generateSignedUrl))
